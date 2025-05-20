@@ -89,6 +89,27 @@ class StateManager:
             logger.warning(f"Existing request lookup failed: {str(e)}")
         return None
 
+    async def is_active_request(self, feedback_id: str, instructions: str, index_name: str) -> bool:
+        """Check if a request is already PENDING or PROCESSING"""
+        try:
+            response = self.table.query(
+                IndexName=index_name,
+                KeyConditionExpression="feedback_id = :fid",
+                FilterExpression="instructions = :inst AND #status IN (:pend, :proc)",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":fid": feedback_id,
+                    ":inst": instructions,
+                    ":pend": "PENDING",
+                    ":proc": "PROCESSING"
+                },
+                Limit=1
+            )
+            return bool(response.get("Items"))
+        except Exception as e:
+            logger.warning(f"Active request check failed: {str(e)}")
+        return False
+
 
 class Orchestrator:
     def __init__(self):
@@ -102,8 +123,8 @@ class Orchestrator:
             feedback_id = body.get("feedback_id", str(uuid4()))
             instructions = body.get("instructions")
 
-            # 2. Check for existing processing requests
-            if instructions and await self.is_request_in_progress(feedback_id, instructions):
+            # 2. Check for existing processing requests (PENDING or PROCESSING)
+            if instructions and await self.state_manager.is_active_request(feedback_id, instructions, FEEDBACK_ID_INDEX):
                 return build_response(409, {
                     "feedback_id": feedback_id,
                     "status": "CONFLICT",
@@ -136,6 +157,13 @@ class Orchestrator:
                 "guardrail_result": guardrail_result,
                 "status": "PROCESSING"
             })
+
+            # If guardrail produced sanitized_text, use it for downstream processing
+            sanitized_text = guardrail_result.get("sanitized_text")
+            if sanitized_text:
+                # Update the feedback text in the original input so tool-executor uses sanitized version
+                state_data["original_input"]["feedback_text"] = sanitized_text
+
             await self.state_manager.save_state(request_id, state_data)
 
             # Queue for tool execution
@@ -144,7 +172,10 @@ class Orchestrator:
                 MessageBody=json.dumps({
                     "request_id": request_id,
                     "feedback_id": feedback_id,
-                    "instructions": instructions
+                    "instructions": instructions,
+                    "sanitized_text": sanitized_text,
+                    "original_input": state_data.get("original_input", {}),
+                    "execution_mode": state_data.get("execution_mode", "PARALLEL")
                 })
             )
 
@@ -152,7 +183,8 @@ class Orchestrator:
                 "request_id": request_id,
                 "feedback_id": feedback_id,
                 "status_url": f"/status/{request_id}",
-                "status": "PROCESSING"
+                "status": "PROCESSING",
+                **({"sanitized_text": sanitized_text} if sanitized_text else {})
             })
 
         except Exception as e:
@@ -218,15 +250,50 @@ def lambda_handler(event, context):
 
 # Testing
 if __name__ == "__main__":
-    test_payload = {
-        "feedback_id": "67890",
-        "request_id": "e2f4b967-4345-46c5-b402-4e24adbd7647",
-        "customer_name": "Jane Smith",
-        "feedback_text": "The customer service was very helpful...",
-        "timestamp": "2025-02-15T14:45:00Z",
-        "instructions": "Analyze sentiment and suggest improvements"
-    }
+    test_cases = [
+        {
+            "name": "Happy-path new request",
+            "body": {
+                "feedback_id": "fb_001",
+                "feedback_text": "Great product but delivery was slow",
+                "instructions": "Analyze sentiment and summarize"
+            }
+        },
+        {
+            "name": "Duplicate in-progress request (should return 409)",
+            "body": {
+                "feedback_id": "fb_001",  # same as first case
+                "feedback_text": "Great product but delivery was slow",
+                "instructions": "Analyze sentiment and summarize"
+            }
+        },
+        {
+            "name": "Unsafe instructions (guardrail reject)",
+            "body": {
+                "feedback_id": "fb_002",
+                "feedback_text": "Please write a hateful review",
+                "instructions": "Generate hateful content"
+            }
+        },
+        {
+            "name": "Missing instructions (should 400)",
+            "body": {
+                "feedback_id": "fb_003",
+                "feedback_text": "Average quality"
+            }
+        },
+        {
+            "name": "Request requiring sanitization",
+            "body": {
+                "feedback_id": "fb_004",
+                "feedback_text": "This product is damn bad!!!",
+                "instructions": "Sanitize offensive words and analyze sentiment."
+            }
+        }
+    ]
 
-    event = {"body": json.dumps(test_payload)}
-    response = lambda_handler(event, context=None)
-    print(json.dumps(response, indent=2))
+    for case in test_cases:
+        print(f"\n=== {case['name']} ===")
+        event = {"body": json.dumps(case["body"])}
+        resp = lambda_handler(event, context=None)
+        print(json.dumps(resp, indent=2))

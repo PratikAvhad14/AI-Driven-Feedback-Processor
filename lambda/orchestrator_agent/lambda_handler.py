@@ -192,9 +192,12 @@ class Orchestrator:
             return build_response(500, {"error": str(e)})
 
     def parse_event_body(self, event):
-        """Parse event body from API Gateway"""
-        body = event.get("body", "{}")
-        return json.loads(body) if isinstance(body, str) else body
+        """Parse event body from API Gateway or direct invocation"""
+        if "body" in event:
+            body = event["body"]
+            return json.loads(body) if isinstance(body, str) else body
+        return event
+
 
     def build_initial_state(self, request_id, feedback_id, body):
         """Create initial state object for DynamoDB"""

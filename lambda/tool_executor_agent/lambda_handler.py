@@ -202,7 +202,18 @@ async def handle_record(record: Dict) -> bool:
             tool_plan = await Runner.run(
                 starting_agent=tool_executor_tool, input=instructions
             )
-            tools_to_execute = tool_plan.final_output.use_tools
+            if isinstance(tool_plan.final_output, str):
+                try:
+                    final_output_parsed = json.loads(tool_plan.final_output)
+                    tools_to_execute = final_output_parsed.get("use_tools", [])
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to decode final_output JSON: {str(e)}")
+                    await update_state(
+                        request_id, "FAILED", error="Invalid tool plan format", feedback_id=feedback_id
+                    )
+                    return False
+            else:
+                tools_to_execute = tool_plan.final_output.use_tools
         except Exception as e:
             logger.error(f"Tool planning failed: {str(e)}")
             await update_state(

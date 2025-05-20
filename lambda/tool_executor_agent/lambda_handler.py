@@ -6,6 +6,10 @@ import boto3
 import os
 from decimal import Decimal
 from dotenv import load_dotenv
+from typing import Dict, List, Optional, Any
+from boto3.dynamodb.conditions import Key
+
+# Local imports
 from agents import Runner
 from .tools import (
     sentiment_analysis_tool,
@@ -27,7 +31,6 @@ AWS_REGION = os.getenv("AWS_REGION")
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
-
 class ToolExecutor:
     def __init__(self):
         self.tool_map = {
@@ -37,16 +40,8 @@ class ToolExecutor:
             "summary_generation": summary_generation_tool
         }
 
-    async def execute_tools(self, tools: list, input_text: str, execution_mode: str = "PARALLEL") -> dict:
-        """
-        Execute tools either in parallel or sequentially
-        Args:
-            tools: List of tool names to execute
-            input_text: Text to process
-            execution_mode: "PARALLEL" or "SEQUENTIAL"
-        Returns:
-            Dictionary of tool results
-        """
+    async def execute_tools(self, tools: List[str], input_text: str, execution_mode: str = "PARALLEL") -> Dict:
+        """Execute tools with proper error handling"""
         if execution_mode == "PARALLEL":
             return await self._execute_parallel(tools, input_text)
         return await self._execute_sequential(tools, input_text)
@@ -59,17 +54,17 @@ class ToolExecutor:
                 logger.warning(f"Unknown tool skipped: {tool_name}")
                 continue
             tasks.append(
-                Runner.run(
-                    starting_agent=self.tool_map[tool_name],
-                    input=input_text
+                    Runner.run(
+                        starting_agent=self.tool_map[tool_name],
+                        input=input_text
                 )
             )
- 
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return self._format_results(tools, results)
 
-    async def _execute_sequential(self, tools: list, input_text: str) -> dict:
-        """Execute tools one after another"""
+    async def _execute_sequential(self, tools: List[str], input_text: str) -> Dict:
+        """Execute tools one after another with error isolation"""
         results = {}
         for tool_name in tools:
             try:
@@ -78,8 +73,8 @@ class ToolExecutor:
                     continue
 
                 result = await Runner.run(
-                    starting_agent=self.tool_map[tool_name],
-                    input=input_text
+                        starting_agent=self.tool_map[tool_name],
+                        input=input_text
                 )
                 results[tool_name] = result.final_output.model_dump()
             except Exception as e:
@@ -87,35 +82,121 @@ class ToolExecutor:
                 logger.error(f"Tool {tool_name} failed: {str(e)}")
         return results
 
-    def _format_results(self, tools: list, results: list) -> dict:
-        """Format parallel execution results"""
+    def _format_results(self, tools: List[str], results: List) -> Dict:
+        """Standardize output format for both success and error cases"""
         output = {}
         for tool_name, result in zip(tools, results):
             if isinstance(result, Exception):
-                output[tool_name] = {"error": str(result)}
-                logger.error(f"Tool {tool_name} failed: {str(result)}")
+                error_msg = str(result)
+                if isinstance(result, asyncio.TimeoutError):
+                    error_msg = "Tool execution timed out"
+                output[tool_name] = {"error": error_msg}
+                logger.error(f"Tool {tool_name} failed: {error_msg}")
             else:
                 output[tool_name] = result.final_output.model_dump()
         return output
 
+async def get_state(request_id: str) -> Optional[Dict]:
+    """Get the current state for a request_id"""
+    try:
+        response = table.get_item(
+            Key={"request_id": request_id}
+        )
+        return response.get('Item')
+    except Exception as e:
+        logger.error(f"DynamoDB get_item failed: {str(e)}")
+        raise
 
-async def handle_record(record: dict):
+def convert_floats_to_decimals(obj: Any) -> Any:
+    """Recursively convert all floats to Decimals in a data structure"""
+    if isinstance(obj, float):
+        return Decimal(str(obj))  # Convert via string to avoid precision issues
+    elif isinstance(obj, dict):
+        return {k: convert_floats_to_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_floats_to_decimals(i) for i in obj]
+    return obj
+
+async def update_state(
+    request_id: str, 
+    status: str,
+    **kwargs
+) -> bool:
+    """Update state in DynamoDB using just request_id as key"""
+    update_expr = ["SET #status = :status, updated_at = :now"]
+    attr_values = {
+        ":status": status,
+        ":now": Decimal(str(time.time()))
+    }
+
+    # Handle optional fields
+    if "results" in kwargs:
+        update_expr.append("tool_results = :results")
+        attr_values[":results"] = convert_floats_to_decimals(kwargs["results"])
+
+    if "error" in kwargs:
+        update_expr.append("error_message = :error")
+        attr_values[":error"] = str(kwargs["error"])
+
+    if "feedback_id" in kwargs:
+        update_expr.append("feedback_id = :feedback_id")
+        attr_values[":feedback_id"] = kwargs["feedback_id"]
+
+    try:
+        # Convert all numeric values in attr_values to Decimal
+        attr_values = convert_floats_to_decimals(attr_values)
+        
+        response = table.update_item(
+            Key={"request_id": request_id},
+            UpdateExpression=", ".join(update_expr),
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues=attr_values,
+            ReturnValues="UPDATED_NEW"
+        )
+        
+        logger.debug(f"State updated successfully: {response}")
+        return True
+        
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        logger.warning(f"Conditional update failed for request {request_id}")
+        return False
+    except table.meta.client.exceptions.ProvisionedThroughputExceededException:
+        logger.warning("Throughput exceeded - retry might succeed")
+        return False
+    except Exception as e:
+        logger.error(
+            f"Failed to update state for request {request_id}: {str(e)}",
+            exc_info=True,
+            extra={
+                "request_id": request_id,
+                "update_expression": ", ".join(update_expr),
+                "attribute_values": attr_values
+            }
+        )
+        return False
+
+async def handle_record(record: Dict) -> bool:
     """Process a single SQS record"""
     try:
         message = json.loads(record["body"])
-        request_id = message["request_id"]
+        request_id = message.get("request_id")
         feedback_id = message.get("feedback_id")
         instructions = message.get("instructions")
 
-        # Get current state from DynamoDB
-        state = table.get_item(Key={"request_id": request_id}).get("Item", {})
+        logger.info(f"Processing request {request_id}")
+
+        # Get current state
+        state = await get_state(request_id)
         if not state:
             logger.error(f"No state found for request_id: {request_id}")
-            return
+            return False
 
-        # Determine execution mode (default to parallel)
-        execution_mode = state.get("execution_mode", "PARALLEL")
-        input_text = state["original_input"].get("feedback_text", "")
+        # Update status to PROCESSING first
+        await update_state(
+            request_id,
+            "PROCESSING",
+            feedback_id=feedback_id
+        )
 
         # Get tool execution plan
         try:
@@ -126,25 +207,30 @@ async def handle_record(record: dict):
             tools_to_execute = tool_plan.final_output.use_tools
         except Exception as e:
             logger.error(f"Tool planning failed: {str(e)}")
-            await update_state(request_id, "FAILED", error=str(e))
-            return
+            await update_state(
+                request_id,
+                "FAILED",
+                error=str(e),
+                feedback_id=feedback_id
+            )
+            return False
 
         # Execute tools
         executor = ToolExecutor()
         try:
             tool_results = await executor.execute_tools(
                 tools_to_execute,
-                input_text,
-                execution_mode
+                state["original_input"].get("feedback_text", ""),
+                state.get("execution_mode", "PARALLEL")
             )
 
-            # Update state with results
             await update_state(
                 request_id,
                 "COMPLETED",
                 results=tool_results,
                 feedback_id=feedback_id
             )
+            return True
 
         except Exception as e:
             logger.error(f"Tool execution failed: {str(e)}")
@@ -154,64 +240,40 @@ async def handle_record(record: dict):
                 error=str(e),
                 feedback_id=feedback_id
             )
+            return False
 
     except Exception as e:
         logger.error(f"Record processing failed: {str(e)}")
-
-
-async def update_state(request_id: str, status: str, **kwargs):
-    """Update DynamoDB state with additional fields"""
-    update_expr = "SET #status = :status, updated_at = :now"
-    attr_values = {
-        ":status": status,
-        ":now": Decimal(str(time.time()))
-    }
-
-    if "results" in kwargs:
-        update_expr += ", tool_results = :results"
-        attr_values[":results"] = kwargs["results"]
-
-    if "error" in kwargs:
-        update_expr += ", error_message = :error"
-        attr_values[":error"] = kwargs["error"]
-
-    try:
-        table.update_item(
-            Key={"request_id": request_id},
-            UpdateExpression=update_expr,
-            ExpressionAttributeNames={"#status": "status"},
-            ExpressionAttributeValues=attr_values
-        )
-    except Exception as e:
-        logger.error(f"Failed to update state: {str(e)}")
-        raise
-
+        return False
 
 def lambda_handler(event, context):
     """Main Lambda entry point"""
-    loop = asyncio.get_event_loop()
-    try:
-        # Process all SQS records
-        for record in event.get("Records", []):
-            loop.run_until_complete(handle_record(record))
+    async def process_records():
+        results = await asyncio.gather(
+            *[handle_record(record) for record in event.get("Records", [])],
+            return_exceptions=True
+        )
+        
+        success_count = sum(1 for r in results if r is True)
+        if success_count != len(event.get("Records", [])):
+            raise Exception(f"Processed {success_count}/{len(event.get('Records', []))} records successfully")
 
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(process_records())
         return {
             "statusCode": 200,
-            "body": "Tool execution completed"
+            "body": json.dumps({"message": "Processing completed"})
         }
     except Exception as e:
         logger.error(f"Lambda handler failed: {str(e)}")
         return {
             "statusCode": 500,
-            "body": f"Error: {str(e)}"
+            "body": json.dumps({"error": str(e)})
         }
-    finally:
-        loop.close()
 
-
-# Testing
 if __name__ == "__main__":
-    # Mock SQS event
+    # Test with mock SQS event
     test_event = {
         "Records": [
             {
@@ -230,7 +292,7 @@ if __name__ == "__main__":
         "feedback_id": "feedback456",
         "status": "PROCESSING",
         "original_input": {
-            "feedback_text": "The product is great but delivery was slow",
+            "feedback_text": "The product is great and delivery was also awesome",
             "instructions": "Analyze sentiment and summarize"
         },
         "created_at": str(time.time()),
@@ -242,7 +304,5 @@ if __name__ == "__main__":
     print("Execution result:", result)
 
     # Check final state
-    final_state = table.get_item(Key={
-        "request_id": "test123",
-        "created_at": "1747596267.144289"}).get("Item", {})
+    final_state = table.get_item(Key={"request_id": "test123"}).get("Item", {})
     print("Final state:", json.dumps(final_state, indent=2, default=str))

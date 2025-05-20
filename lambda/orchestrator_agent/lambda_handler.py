@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from agents import Runner
 from .tools import guardrail_tool
 from utils.common_functions import build_response
+from typing import Optional
 
 load_dotenv(override=True)
 logger = logging.getLogger(__name__)
@@ -68,6 +69,26 @@ class StateManager:
             logger.warning(f"Cache check failed: {str(e)}")
         return None
 
+    async def get_existing_request_id(self, feedback_id: str, instructions: str, index_name: str) -> Optional[str]:
+        """Return existing request_id for identical feedback_id+instructions if present"""
+        try:
+            response = self.table.query(
+                IndexName=index_name,
+                KeyConditionExpression="feedback_id = :fid",
+                FilterExpression="instructions = :inst",
+                ExpressionAttributeValues={
+                    ":fid": feedback_id,
+                    ":inst": instructions
+                },
+                ScanIndexForward=False,
+                Limit=1
+            )
+            if response.get("Items"):
+                return response["Items"][0].get("request_id")
+        except Exception as e:
+            logger.warning(f"Existing request lookup failed: {str(e)}")
+        return None
+
 
 class Orchestrator:
     def __init__(self):
@@ -88,8 +109,10 @@ class Orchestrator:
                     "status": "CONFLICT",
                     "message": "Similar request already in progress"
                 })
-            # 3. Initialize request tracking
-            request_id = str(uuid4())
+            # 3. Reuse existing request_id if this feedback_id + instructions already processed
+            request_id = await self.state_manager.get_existing_request_id(
+                feedback_id, instructions, FEEDBACK_ID_INDEX
+            ) or str(uuid4())
             state_data = self.build_initial_state(
                 request_id, feedback_id, body)
 
@@ -197,6 +220,7 @@ def lambda_handler(event, context):
 if __name__ == "__main__":
     test_payload = {
         "feedback_id": "67890",
+        "request_id": "e2f4b967-4345-46c5-b402-4e24adbd7647",
         "customer_name": "Jane Smith",
         "feedback_text": "The customer service was very helpful...",
         "timestamp": "2025-02-15T14:45:00Z",

@@ -2,6 +2,8 @@
 
 Automates customer feedback analysis using AI based on user-defined instructions.
 
+The requirement was to build a system that could process feedback via an API, apply AI-based tools like sentiment analysis, topic categorization, keyword extraction, and summarization — and do all this dynamically based on user instructions.
+
 System Overview
 
 The system consists of two primary agents:

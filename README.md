@@ -44,49 +44,54 @@ System Architecture:
 4. Summarization Tool    
     Produces clear and concise summaries, highlighting key insights and actionable recommendations.
 
-**API Usage**
-<!-- Sample Reqest -->
+## API Usage
 
+### Sample Request
+
+```json
 {
+  "feedback_id": "67890",
+  "customer_name": "Jane Smith",
+  "feedback_text": "The customer service was very helpful, but the website checkout process was confusing.",
+  "timestamp": "2025-02-15T14:45:00Z",
+  "instructions": "Analyze sentiment and suggest improvements for the checkout process."
+}
+```
+
+### Sample Response
+
+```json
+{
+  "metadata": {
     "feedback_id": "67890",
-    "customer_name": "Jane Smith",
-    "feedback_text": "The customer service was very helpful, but the website checkout process was confusing.",
-    "timestamp": "2025-02-15T14:45:00Z",
-    "instructions": "Analyze sentiment and suggest improvements for the checkout process."
-}
-
-<!-- Sample Response -->
-
-{
-    "metadata": {
-        "feedback_id": "67890",
-        "timestamp": "2025-02-15T14:47:32Z",
-        "status": "completed",
-        "execution_time_ms": 1245
-    },
-    "analysis": {
-        "executed_tools": [
-            "sentiment_analysis",
-            "summarization"
-        ],
-        "results": {
-            "sentiment_analysis": {
-                "sentiment": "neutral"
-            },
-            "summarization": {
-                "summary": "Customer praised support but experienced checkout confusion",
-                "actionable_recommendations": [
-                    {
-                        "priority": "high",
-                        "action": "Add visual progress indicator during checkout steps",
-                        "impact": "Improves user orientation"
-                    }
-                ]
-            }
-        }
-    },
-    "context": {
-        "customer_name": "Jane Smith",
-        "original_instructions": "Analyze sentiment and suggest improvements for the checkout process"
+    "timestamp": "2025-02-15T14:47:32Z",
+    "status": "completed",
+    "execution_time_ms": 1245
+  },
+  "analysis": {
+    "executed_tools": [
+      "sentiment_analysis",
+      "summarization"
+    ],
+    "results": {
+      "sentiment_analysis": {
+        "sentiment": "neutral"
+      },
+      "summarization": {
+        "summary": "Customer praised support but experienced checkout confusion",
+        "actionable_recommendations": [
+          {
+            "priority": "high",
+            "action": "Add visual progress indicator during checkout steps",
+            "impact": "Improves user orientation"
+          }
+        ]
+      }
     }
+  },
+  "context": {
+    "customer_name": "Jane Smith",
+    "original_instructions": "Analyze sentiment and suggest improvements for the checkout process"
+  }
 }
+```

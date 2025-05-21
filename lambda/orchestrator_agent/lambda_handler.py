@@ -182,7 +182,6 @@ class Orchestrator:
             return build_response(200, {
                 "request_id": request_id,
                 "feedback_id": feedback_id,
-                "status_url": f"/status/{request_id}",
                 "status": "PROCESSING",
                 **({"sanitized_text": sanitized_text} if sanitized_text else {})
             })
@@ -197,7 +196,6 @@ class Orchestrator:
             body = event["body"]
             return json.loads(body) if isinstance(body, str) else body
         return event
-
 
     def build_initial_state(self, request_id, feedback_id, body):
         """Create initial state object for DynamoDB"""
@@ -292,11 +290,119 @@ if __name__ == "__main__":
                 "feedback_text": "This product is damn bad!!!",
                 "instructions": "Sanitize offensive words and analyze sentiment."
             }
+        },
+        {
+            "feedback_id": "sa_pos_001",
+            "customer_name": "Alice Smith",
+            "feedback_text": "Absolutely loved the product – exceeded my expectations!",
+            "timestamp": "2025-01-10T08:15:00Z",
+            "instructions": "Run sentiment analysis."
+        },
+        {
+            "feedback_id": "sa_neg_001",
+            "customer_name": "Ben Turner",
+            "feedback_text": "This is the worst purchase I've ever made.",
+            "timestamp": "2025-01-10T08:20:00Z",
+            "instructions": "Determine the sentiment of this feedback."
+        },
+        {
+            "feedback_id": "sa_neu_001",
+            "customer_name": "Chloe Liu",
+            "feedback_text": "The product arrived yesterday. Haven't used it yet.",
+            "timestamp": "2025-01-10T08:25:00Z",
+            "instructions": "What is the sentiment?"
+        },
+        {
+            "feedback_id": "sa_edge_001",
+            "customer_name": "David Brown",
+            "feedback_text": "Great… another gadget that breaks on day one.",
+            "timestamp": "2025-01-10T08:30:00Z",
+            "instructions": "Analyse the sentiment—including sarcasm detection if possible."
+        },
+        {
+            "feedback_id": "tc_ship_001",
+            "customer_name": "Emma Johnson",
+            "feedback_text": "My package showed up three days late and the box was damaged.",
+            "timestamp": "2025-01-10T08:35:00Z",
+            "instructions": "Classify the topic of this feedback."
+        },
+        {
+            "feedback_id": "tc_ret_001",
+            "customer_name": "Felix Garcia",
+            "feedback_text": "I'd like to return the shoes because they don't fit.",
+            "timestamp": "2025-01-10T08:40:00Z",
+            "instructions": "Identify the feedback topic."
+        },
+        {
+            "feedback_id": "tc_uncat_001",
+            "customer_name": "Grace Patel",
+            "feedback_text": "The colour options could be better.",
+            "timestamp": "2025-01-10T08:45:00Z",
+            "instructions": "Categorise this feedback."
+        },
+        {
+            "feedback_id": "kc_multi_001",
+            "customer_name": "Henry Nguyen",
+            "feedback_text": "Battery life is phenomenal but the charging cable feels flimsy.",
+            "timestamp": "2025-01-10T08:50:00Z",
+            "instructions": "Extract context-aware keywords."
+        },
+        {
+            "feedback_id": "kc_single_001",
+            "customer_name": "Ivy Martinez",
+            "feedback_text": "Lag.",
+            "timestamp": "2025-01-10T08:55:00Z",
+            "instructions": "Extract keywords with context."
+        },
+        {
+            "feedback_id": "sg_std_001",
+            "customer_name": "Jack Wilson",
+            "feedback_text": "I'm pleased with the camera quality but disappointed by the slow autofocus. Customer support was helpful though.",
+            "timestamp": "2025-01-10T09:00:00Z",
+            "instructions": "Generate a summary and list any actionable insights."
+        },
+        {
+            "feedback_id": "sg_short_001",
+            "customer_name": "Kara Lee",
+            "feedback_text": "Great.",
+            "timestamp": "2025-01-10T09:05:00Z",
+            "instructions": "Summarise the feedback and list actions."
+        },
+        {
+            "feedback_id": "te_sent_001",
+            "customer_name": "Liam Adams",
+            "feedback_text": "Love the new UI!",
+            "timestamp": "2025-01-10T09:10:00Z",
+            "instructions": "Just tell me the sentiment."
+        },
+        {
+            "feedback_id": "te_sent_sum_001",
+            "customer_name": "Maya Chen",
+            "feedback_text": "The checkout process is confusing.",
+            "timestamp": "2025-01-10T09:15:00Z",
+            "instructions": "Find the sentiment and summarise the feedback."
+        },
+        {
+            "feedback_id": "te_all_001",
+            "customer_name": "Noah Davis",
+            "feedback_text": "Delivery was late, packaging damaged and the manual is unclear.",
+            "timestamp": "2025-01-10T09:20:00Z",
+            "instructions": "Give me sentiment, topics, keywords and a summary."
+        },
+        {
+            "feedback_id": "te_unsupported_001",
+            "customer_name": "Olivia Perez",
+            "feedback_text": "Please translate this review to French.",
+            "timestamp": "2025-01-10T09:25:00Z",
+            "instructions": "Translate the feedback."
         }
     ]
 
     for case in test_cases:
-        print(f"\n=== {case['name']} ===")
-        event = {"body": json.dumps(case["body"])}
+        # Support both {"name": ..., "body": {...}} and plain-body dicts
+        body = case.get("body", case)
+        name = case.get("name", body.get("feedback_id", "test_case"))
+        print(f"\n=== {name} ===")
+        event = {"body": json.dumps(body)}
         resp = lambda_handler(event, context=None)
         print(json.dumps(resp, indent=2))

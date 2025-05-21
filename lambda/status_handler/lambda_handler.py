@@ -34,42 +34,64 @@ def validate_and_format_response(item: Dict[str, Any]) -> Dict[str, Any]:
         if not feedback_timestamp:
             feedback_timestamp = datetime.now(timezone.utc).isoformat()
 
-        # Calculate execution time in milliseconds
+        # Calculate execution time in milliseconds (if available)
         execution_time_ms = None
-        if 'guardrail_result' in item and item['guardrail_result'].get('execution_time'):
-            execution_time_ms = int(float(item['guardrail_result']['execution_time']) * 1000)
+        guardrail = item.get("guardrail_result", {})
+        exec_time = guardrail.get("execution_time")
+        if exec_time is not None:
+            execution_time_ms = int(float(exec_time) * 1000)
 
-        # Format the response
+        # -------------------------
+        # Build dynamic response
+        # -------------------------
+        tool_results: Dict[str, Any] = item.get("tool_results", {})
+
+        executed_tools = list(tool_results.keys())
+
+        dynamic_results: Dict[str, Any] = {}
+        for tool_name, tool_data in tool_results.items():
+            if tool_name == "summary_generation":
+                dynamic_results["summarization"] = {
+                    "summary": tool_data.get("summary_text", ""),
+                    "actionable_recommendations": tool_data.get(
+                        "actionable_insights", []
+                    ),
+                }
+            elif tool_name == "sentiment_analysis":
+                dynamic_results["sentiment_analysis"] = {
+                    "sentiment": tool_data.get("sentiment", "unknown")
+                }
+            elif tool_name == "topic_categorization":
+                dynamic_results["topic_categorization"] = {
+                    "categories": tool_data.get("categories", [])
+                }
+            elif tool_name == "keyword_contextualization":
+                dynamic_results["keyword_contextualization"] = {
+                    "keywords": tool_data.get("keywords", [])
+                }
+            else:
+                # Fallback: include data as-is under the original tool name
+                dynamic_results[tool_name] = tool_data
+
+        # -------------------------
+        # Assemble final response
+        # -------------------------
         formatted_response = {
             "metadata": {
+                "request_id": item.get("request_id"),
                 "feedback_id": item.get("feedback_id"),
                 "timestamp": feedback_timestamp,
                 "status": item.get("status", "").lower(),
-                "execution_time_ms": execution_time_ms
+                "execution_time_ms": execution_time_ms,
             },
             "analysis": {
-                "executed_tools": list(item.get("tool_results", {}).keys()),
-                "results": {
-                    "sentiment_analysis": {
-                        "sentiment": item.get("tool_results", {})
-                        .get("sentiment_analysis", {})
-                        .get("sentiment", "unknown")
-                    },
-                    "summarization": {
-                        "summary": item.get("tool_results", {})
-                        .get("summary_generation", {})
-                        .get("summary_text", ""),
-                        "actionable_recommendations": item.get("tool_results", {})
-                        .get("summary_generation", {})
-                        .get("actionable_insights", [])
-                    }
-                }
+                "executed_tools": executed_tools,
+                "results": dynamic_results,
             },
             "context": {
                 "customer_name": item.get("original_input", {}).get("customer_name"),
                 "original_instructions": item.get("instructions", ""),
-
-            }
+            },
         }
 
         # Clean up empty/None values
@@ -251,7 +273,7 @@ def test_lambda_handler():
         # },
         {
             "name": "request_id Lookup - Success",
-            "body": {"request_id": "02c8eb18-44bc-48f4-915c-1715c1af1af3"},
+            "body": {"request_id": "4cf62ebd-61b6-4581-b1b6-4fec0e3ef6e4"},
             "expected_status": 200
         }
     ]

@@ -56,18 +56,25 @@ def validate_and_format_response(item: Dict[str, Any]) -> Dict[str, Any]:
                     "actionable_recommendations": tool_data.get(
                         "actionable_insights", []
                     ),
+                    "clarity_score": tool_data.get("clarity_score", ""),
                 }
             elif tool_name == "sentiment_analysis":
                 dynamic_results["sentiment_analysis"] = {
-                    "sentiment": tool_data.get("sentiment", "unknown")
+                    "sentiment": tool_data.get("sentiment", "unknown"),
+                    "explanation": tool_data.get("explanation", ""),
+                    "confidence_score": tool_data.get("confidence_score", ""),
                 }
             elif tool_name == "topic_categorization":
                 dynamic_results["topic_categorization"] = {
-                    "categories": tool_data.get("categories", [])
+                    "primary_topic": tool_data.get("primary_topic", ""),
+                    "confidence_scores": tool_data.get("confidence_scores", []),
+                    "secondary_topics": tool_data.get("secondary_topics", []),
                 }
             elif tool_name == "keyword_contextualization":
                 dynamic_results["keyword_contextualization"] = {
-                    "keywords": tool_data.get("keywords", [])
+                    "keywords": tool_data.get("keyword", []),
+                    "context": tool_data.get("context", ""),
+                    "relevance_score": tool_data.get("relevance_score", ""),
                 }
             else:
                 # Fallback: include data as-is under the original tool name

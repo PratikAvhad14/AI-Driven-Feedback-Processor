@@ -98,6 +98,7 @@ def validate_and_format_response(item: Dict[str, Any]) -> Dict[str, Any]:
             "context": {
                 "customer_name": item.get("original_input", {}).get("customer_name"),
                 "original_instructions": item.get("instructions", ""),
+                "feedback_text": item.get("original_input", {}).get("feedback_text"),
             },
         }
 

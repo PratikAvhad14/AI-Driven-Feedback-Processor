@@ -263,7 +263,7 @@ if __name__ == "__main__":
         {
             "name": "Duplicate in-progress request (should return 409)",
             "body": {
-                "feedback_id": "fb_001",  # same as first case
+                "feedback_id": "fb_001",
                 "feedback_text": "Great product but delivery was slow",
                 "instructions": "Analyze sentiment and summarize"
             }

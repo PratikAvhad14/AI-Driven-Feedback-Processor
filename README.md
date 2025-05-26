@@ -1,6 +1,8 @@
 # AI-Driven-Feedback-Processor
 
-Automates customer feedback analysis using AI based on user-defined instructions.
+Automates customer feedback analysis using AI based on user-defined instructions.  AI-Driven Feedback Processor — a solution designed to intelligently automate customer feedback processing based on user-defined instructions.
+
+The requirement was to build a system that could process feedback via an API, apply AI-based tools like sentiment analysis, topic categorization, keyword extraction, and summarization — and do all this dynamically based on user instructions.
 
 System Overview
 

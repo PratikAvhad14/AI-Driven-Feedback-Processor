@@ -115,6 +115,23 @@ class Orchestrator:
     def __init__(self):
         self.state_manager = StateManager(table)
 
+    def retry_async(max_retries=3, backoff=2):
+        """Async retry decorator with exponential backoff"""
+        def decorator(func):
+            async def wrapper(*args, **kwargs):
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        return await func(*args, **kwargs)
+                    except Exception as e:
+                        if attempt == max_retries:
+                            raise
+                        wait_time = backoff ** attempt
+                        logging.warning(f"Retry {attempt}/{max_retries} after error: {e}. Retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+            return wrapper
+        return decorator
+
+    @retry_async(max_retries=3, backoff=2)
     async def handle_request(self, event):
         """Main request handler for the orchestrator"""
         try:
@@ -210,6 +227,7 @@ class Orchestrator:
             "instructions": body.get("instructions")
         }
 
+    @retry_async(max_retries=3, backoff=2)
     async def validate_guardrails(self, instructions):
         """Run guardrail validation"""
         if not instructions:
@@ -324,8 +342,7 @@ if __name__ == "__main__":
             "customer_name": "Emma Johnson",
             "feedback_text": "My package showed up three days late and the box was damaged.",
             "timestamp": "2025-01-10T08:35:00Z",
-            "instructions": "Classify the topic of this feedback."
-        },
+            "instructions": "Classify the topic of this feedback." },
         {
             "feedback_id": "tc_ret_001",
             "customer_name": "Felix Garcia",
